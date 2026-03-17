@@ -1,0 +1,860 @@
+generator client {
+  provider   = "prisma-client-js"
+  engineType = "binary"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+//
+// ===============================
+// ENUMS
+// ===============================
+//
+
+enum PricingType {
+  HOURLY
+  DAILY
+  WEEKLY
+  MONTHLY
+  YEARLY
+}
+
+enum RentalType {
+  HOURLY
+  DAILY
+  WEEKLY
+  MONTHLY
+  YEARLY
+}
+
+enum BookingStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+enum ReceiptStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageStatus {
+  RECEIVED
+  PROCESSING
+  PROCESSED
+  SEND_REQUESTED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+  DEAD
+}
+
+enum MessageEventType {
+  RECEIVED
+  PROCESSING_STARTED
+  PROCESSED
+  SEND_REQUESTED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+  RETRY_SCHEDULED
+}
+
+enum JobType {
+  PROCESS_INBOUND
+  SEND_OUTBOUND
+}
+
+enum JobState {
+  PENDING
+  RUNNING
+  DONE
+  FAILED
+  DEAD
+}
+
+enum InvoiceStatus {
+  PENDING
+  PAID
+  FAILED
+  CANCELED
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  EXPIRED
+  CANCELED
+}
+
+enum SubscriptionTier {
+  STANDARD
+  PREMIUM
+}
+
+enum BillingCycle {
+  MONTHLY
+  YEARLY
+}
+
+enum LocationSource {
+  MANUAL
+  CURRENT_DEVICE
+  MAP_PICKER
+}
+
+enum DemandNotificationStatus {
+  QUEUED
+  SENT
+  SKIPPED
+  FAILED
+}
+
+enum DemandNotificationSkipReason {
+  COOLDOWN
+  THROTTLED
+  NO_SUBSCRIPTION
+  NO_CAPACITY
+  DUPLICATE
+  INTERNAL
+}
+
+enum ReferralCampaign {
+  OWNER_ONBOARD
+  SHARE_LISTING
+  INVITE_USER
+}
+
+enum FunnelEventType {
+  START
+  CITY_SELECTED
+  SERVICE_SELECTED
+  SEARCH
+  LISTING_VIEW
+  BOOKING_DRAFT
+  BOOKING_CONFIRMED
+}
+
+//
+// ===============================
+// OWNER
+// ===============================
+//
+
+model Owner {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  name  String
+  phone String  @unique
+  email String? @unique
+
+  // Public-facing owner avatar.
+  // Visibility is enforced in application layer:
+  // - before booking approval: avatar + bio only
+  // - after booking approval: contact fields may also be exposed
+  profilePhotoUrl String?
+
+  // Public-facing short bio shown together with avatar.
+  bio String? @db.Text
+
+  // LEGACY
+  paidUntil DateTime?
+
+  properties          Property[]
+  tokens              OwnerToken[]
+  invoices            Invoice[]
+  subscriptions       OwnerSubscription[]
+  services            Service[]
+  demandSubscriptions OwnerDemandSubscription[]
+  demandNotifications DemandNotification[]
+  referralCodes       ReferralCode[]
+  eventLogs           EventLog[]
+
+  @@index([paidUntil])
+}
+
+model OwnerToken {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+
+  ownerId String
+  owner   Owner @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  code      String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+
+  isActive Boolean @default(true)
+
+  @@index([ownerId])
+  @@index([expiresAt])
+}
+
+//
+// ===============================
+// SERVICE
+// ===============================
+//
+
+model Service {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Unique key like RENT_HOME, HOTEL, BARBER
+  key  String @unique
+  name String
+
+  description String?
+
+  // NULL = global service
+  // NOT NULL = owner-private
+  ownerId String?
+  owner   Owner? @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  // LEGACY BILLING FIELDS
+  price      Int?
+  currency   String @default("AZN")
+  periodDays Int    @default(30)
+
+  // NEW PLAN PRICING
+  standardMonthlyPrice Int?
+  standardYearlyPrice  Int?
+  premiumMonthlyPrice  Int?
+  premiumYearlyPrice   Int?
+
+  isActive Boolean @default(false)
+
+  subscriptions            OwnerSubscription[]
+  invoices                 Invoice[]
+  properties               Property[]
+  demandSignals            DemandSignal[]
+  demandSignalEvents       DemandSignalEvent[]
+  ownerDemandSubscriptions OwnerDemandSubscription[]
+
+  @@index([ownerId])
+  @@index([isActive])
+  @@index([key])
+}
+
+//
+// ===============================
+// OWNER SUBSCRIPTION
+// ===============================
+//
+
+model OwnerSubscription {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  ownerId String
+  owner   Owner @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  serviceId String
+  service   Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  status    SubscriptionStatus @default(EXPIRED)
+  paidUntil DateTime?
+
+  tier         SubscriptionTier @default(STANDARD)
+  billingCycle BillingCycle     @default(MONTHLY)
+
+  invoices Invoice[]
+
+  @@unique([ownerId, serviceId])
+  @@index([ownerId])
+  @@index([serviceId])
+  @@index([paidUntil])
+  @@index([status])
+  @@index([tier])
+  @@index([billingCycle])
+  @@index([serviceId, tier, status, paidUntil])
+}
+
+//
+// ===============================
+// INVOICE
+// ===============================
+//
+
+model Invoice {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  ownerId String
+  owner   Owner @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  subscriptionId String?
+  subscription   OwnerSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+
+  serviceId String?
+  service   Service? @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+
+  amount   Int
+  currency String @default("AZN")
+
+  provider    String
+  providerRef String? @unique
+
+  status InvoiceStatus @default(PENDING)
+  paidAt DateTime?
+
+  // LEGACY
+  periodDays Int @default(30)
+
+  // NEW
+  subscriptionTier SubscriptionTier @default(STANDARD)
+  billingCycle     BillingCycle     @default(MONTHLY)
+
+  @@index([ownerId])
+  @@index([subscriptionId])
+  @@index([serviceId])
+  @@index([status])
+  @@index([provider])
+  @@index([createdAt])
+  @@index([subscriptionTier])
+  @@index([billingCycle])
+}
+
+//
+// ===============================
+// PROPERTY
+// ===============================
+//
+
+model Property {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  ownerId String
+  owner   Owner @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  serviceId String?
+  service   Service? @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+
+  title     String
+  roomCount Int
+  areaName  String
+
+  // Human-readable display location label/address.
+  location String
+  city     String
+
+  // Optional geospatial metadata for current location / map picker flows.
+  locationLat     Float?
+  locationLng     Float?
+  locationPlaceId String?
+  locationSource  LocationSource @default(MANUAL)
+
+  rulesText    String
+  checkInTime  String?
+  checkOutTime String?
+  quietHours   String?
+
+  depositHourly Int?
+  depositDaily  Int?
+
+  bankCardNumber String?
+  bankName       String?
+  m10Number      String?
+  cryptoAddress  String?
+  cryptoChain    String?
+  binanceId      String?
+
+  // Business rule:
+  // - minimum 1 image required
+  // - maximum 30 images allowed
+  // Enforced in application layer.
+  images        PropertyImage[]
+  bookings      Booking[]
+  drafts        BookingDraft[]
+  favorites     Favorite[]
+  pricings      PropertyPricing[]
+  referralCodes ReferralCode[]
+  eventLogs     EventLog[]
+
+  isVisible Boolean @default(true)
+
+  approvalExpireHours Int @default(2)
+
+  @@index([ownerId])
+  @@index([areaName])
+  @@index([city])
+  @@index([serviceId])
+  @@index([serviceId, city])
+  @@index([ownerId, isVisible])
+  @@index([locationPlaceId])
+  @@index([locationSource])
+  @@index([locationLat, locationLng])
+}
+
+model PropertyPricing {
+  id         String   @id @default(uuid())
+  propertyId String
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  type            PricingType
+  unitPrice       Int
+  depositRequired Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([propertyId])
+}
+
+model PropertyImage {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+
+  propertyId String
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  url       String
+  sortOrder Int
+
+  @@unique([propertyId, sortOrder])
+  @@index([propertyId])
+}
+
+//
+// ===============================
+// BOOKING
+// ===============================
+//
+
+model Booking {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  propertyId String
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  status BookingStatus @default(PENDING)
+
+  customerPhone String
+  rentalType    RentalType
+
+  startAt DateTime
+  endAt   DateTime
+
+  totalPrice   Int
+  depositPrice Int @default(0)
+
+  ownerNote String?
+
+  receipt   BookingReceipt?
+  messages  Message[]
+  eventLogs EventLog[]
+
+  expiresAt DateTime?
+
+  @@index([propertyId, status])
+  @@index([customerPhone])
+  @@index([startAt, endAt])
+}
+
+model Favorite {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+
+  customerPhone String
+  propertyId    String
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([customerPhone, propertyId])
+  @@index([customerPhone])
+  @@index([propertyId])
+}
+
+model BookingReceipt {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  bookingId String  @unique
+  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  status ReceiptStatus @default(PENDING)
+
+  fileUrl         String
+  ownerReviewedAt DateTime?
+}
+
+model BookingDraft {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  waId       String
+  propertyId String
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  rentalType RentalType?
+
+  startAt DateTime?
+  endAt   DateTime?
+
+  @@index([waId])
+  @@index([expiresAt])
+  @@index([propertyId])
+}
+
+//
+// ===============================
+// MESSAGE / JOBS
+// ===============================
+//
+
+model Message {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  direction MessageDirection
+  status    MessageStatus @default(RECEIVED)
+
+  providerMessageId String? @unique
+  phoneNumberId     String?
+  waId              String
+
+  type String
+  body String?
+  raw  Json?
+
+  receivedAt  DateTime?
+  sentAt      DateTime?
+  deliveredAt DateTime?
+  readAt      DateTime?
+  failedAt    DateTime?
+
+  bookingId String?
+  booking   Booking? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+
+  events              MessageEvent[]
+  jobs                MessageJob[]
+  demandNotifications DemandNotification[]
+
+  @@index([waId, createdAt])
+  @@index([phoneNumberId, createdAt])
+  @@index([status, createdAt])
+}
+
+model MessageEvent {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+
+  messageId String
+  message   Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  eventType MessageEventType
+
+  providerStatus    String?
+  providerTimestamp DateTime?
+
+  raw Json?
+
+  fingerprint String @unique
+
+  @@index([messageId, createdAt])
+}
+
+model MessageJob {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messageId String
+  message   Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  type  JobType
+  state JobState @default(PENDING)
+
+  attempts  Int      @default(0)
+  nextRunAt DateTime @default(now())
+
+  lockedAt DateTime?
+  lockedBy String?
+
+  lastError String?
+
+  @@index([state, nextRunAt])
+  @@index([messageId, type])
+}
+
+model ConversationLock {
+  waId String @id
+
+  state String?
+  data  Json?
+
+  lockedAt  DateTime?
+  lockedBy  String?
+  expiresAt DateTime?
+
+  @@index([expiresAt])
+}
+
+model WhatsappMessage {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+
+  messageId String @unique
+
+  from String
+  type String
+  body String?
+
+  raw Json?
+
+  @@index([from])
+  @@index([createdAt])
+}
+
+//
+// ===============================
+// DEMAND SIGNAL
+// ===============================
+//
+
+model DemandSignal {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  city     String
+  areaName String
+
+  serviceKey String?
+
+  searchCount Int @default(1)
+
+  lastNotifiedAt DateTime?
+  service        Service? @relation(fields: [serviceId], references: [id])
+  serviceId      String?
+
+  notifications DemandNotification[]
+
+  @@unique([city, areaName, serviceKey])
+  @@index([city])
+  @@index([areaName])
+  @@index([serviceKey])
+  @@index([city, serviceKey])
+}
+
+model DemandSignalEvent {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+
+  waId          String?
+  customerPhone String?
+
+  city     String
+  areaName String
+
+  serviceKey String?
+
+  serviceId String?
+  service   Service? @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+
+  criteria Json?
+
+  @@index([createdAt])
+  @@index([city, areaName, createdAt])
+  @@index([serviceKey, createdAt])
+  @@index([serviceId, createdAt])
+  @@index([waId, createdAt])
+  @@index([customerPhone, createdAt])
+}
+
+model OwnerDemandSubscription {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  ownerId String
+  owner   Owner @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  city     String
+  areaName String
+
+  serviceKey String?
+  serviceId  String?
+  service    Service? @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+
+  isActive Boolean @default(true)
+
+  @@unique([ownerId, city, areaName, serviceKey])
+  @@index([ownerId])
+  @@index([city, areaName])
+  @@index([serviceKey])
+  @@index([serviceId])
+  @@index([isActive])
+}
+
+model DemandNotification {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  ownerId String
+  owner   Owner @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  signalId String
+  signal   DemandSignal @relation(fields: [signalId], references: [id], onDelete: Cascade)
+
+  city       String
+  areaName   String
+  serviceKey String?
+
+  status     DemandNotificationStatus @default(QUEUED)
+  skipReason DemandNotificationSkipReason?
+  note       String?
+
+  bucketStartAt DateTime
+
+  sentAt   DateTime?
+  failedAt DateTime?
+
+  messageId String?
+  message   Message? @relation(fields: [messageId], references: [id], onDelete: SetNull)
+
+  @@unique([ownerId, signalId, bucketStartAt])
+  @@index([signalId, createdAt])
+  @@index([ownerId, createdAt])
+  @@index([status, createdAt])
+  @@index([city, areaName, createdAt])
+}
+
+model RateLimitBucket {
+  key String @id
+
+  windowStartAt DateTime
+  windowSeconds Int
+
+  count Int @default(0)
+  limit Int
+
+  updatedAt DateTime @updatedAt
+
+  @@index([windowStartAt])
+}
+
+model SavedSearch {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  customerPhone String
+  waId          String?
+
+  city       String
+  areaName   String
+  serviceKey String?
+
+  criteria Json?
+  isActive Boolean @default(true)
+
+  frequencyMinutes Int       @default(10080)
+  lastNotifiedAt   DateTime?
+
+  @@unique([customerPhone, city, areaName, serviceKey])
+  @@index([customerPhone])
+  @@index([waId])
+  @@index([city, areaName])
+  @@index([serviceKey])
+  @@index([isActive])
+}
+
+//
+// ===============================
+// REFERRAL / EVENTS
+// ===============================
+//
+
+model ReferralCode {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+
+  code String @unique
+
+  campaign ReferralCampaign
+
+  ownerId String?
+  owner   Owner? @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  propertyId String?
+  property   Property? @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  attributions ReferralAttribution[]
+
+  expiresAt DateTime?
+
+  @@index([campaign, createdAt])
+  @@index([ownerId])
+  @@index([propertyId])
+}
+
+model ReferralAttribution {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  codeId String
+  code   ReferralCode @relation(fields: [codeId], references: [id], onDelete: Cascade)
+
+  referredWaId          String?
+  referredCustomerPhone String?
+
+  firstSeenAt DateTime @default(now())
+  convertedAt DateTime?
+
+  @@index([codeId])
+  @@index([referredWaId])
+  @@index([referredCustomerPhone])
+  @@index([convertedAt])
+}
+
+model EventLog {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+
+  event FunnelEventType
+
+  waId          String?
+  customerPhone String?
+
+  ownerId String?
+  owner   Owner? @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+
+  propertyId String?
+  property   Property? @relation(fields: [propertyId], references: [id], onDelete: SetNull)
+
+  bookingId String?
+  booking   Booking? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+
+  properties Json?
+
+  @@index([event, createdAt])
+  @@index([waId, createdAt])
+  @@index([customerPhone, createdAt])
+  @@index([ownerId, createdAt])
+  @@index([propertyId, createdAt])
+  @@index([bookingId, createdAt])
+} 

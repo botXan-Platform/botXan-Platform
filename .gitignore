@@ -1,0 +1,32 @@
+# dependencies
+node_modules/
+
+# build
+.next/
+dist/
+build/
+coverage/
+.turbo/
+.vercel/
+.cache/
+*.tsbuildinfo
+
+# env
+.env
+.env.*
+
+# logs
+*.log
+
+# macOS
+.DS_Store
+
+# archives
+*.zip
+
+# runtime/generated
+apps/bot-api/uploads/
+apps/bot-api/.wa-mock/
+
+# optional backups
+*.bak

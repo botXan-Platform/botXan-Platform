@@ -1,0 +1,18 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: botXan-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: botXan
+      POSTGRES_PASSWORD: botXan123
+      POSTGRES_DB: botXan
+    ports:
+      - "5433:5432"
+    volumes:
+      - botXan_pgdata:/var/lib/postgresql/data
+
+volumes:
+  botXan_pgdata:

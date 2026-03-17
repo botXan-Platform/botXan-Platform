@@ -1,0 +1,31 @@
+{
+  "name": "bot-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test:local": "dotenv -e .env -- tsx scripts/localTest.ts"
+  },
+  "packageManager": "pnpm@10.28.1",
+  "dependencies": {
+    "@prisma/client": "^7.4.0",
+    "cors": "^2.8.6",
+    "db": "workspace:*",
+    "dotenv": "^17.2.4",
+    "express": "^5.2.1",
+    "stripe": "^20.3.1"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.2.3",
+    "dotenv-cli": "^11.0.0",
+    "prisma": "^7.4.0",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.3"
+  }
+}
