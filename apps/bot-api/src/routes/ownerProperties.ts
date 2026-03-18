@@ -16,6 +16,11 @@ const MAX_AREA_NAME_LENGTH = 160;
 const MAX_LOCATION_LENGTH = 255;
 const MAX_LOCATION_PLACE_ID_LENGTH = 255;
 const MAX_RULES_TEXT_LENGTH = 5000;
+const DEFAULT_PROPERTY_TIMEZONE = "Asia/Baku";
+const DEFAULT_STAY_CHECK_IN_TIME = "12:00";
+const DEFAULT_STAY_CHECK_OUT_TIME = "12:00";
+const TIME_VALUE_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
+const STAY_BASED_SERVICE_KEYS = new Set(["RENT_HOME", "HOTEL", "HOSTEL"]);
 
 const OWNER_PHONE_VERIFICATION_TOKEN_PREFIX = "OWNER_PHONE_VERIFICATION_V1:";
 
@@ -170,6 +175,64 @@ function normalizeMultilineText(v: unknown) {
     .replace(/\r\n/g, "\n")
     .replace(/\r/g, "\n")
     .trim();
+}
+
+const SUPPORTED_TIMEZONES = new Set(
+  typeof Intl.supportedValuesOf === "function" ? Intl.supportedValuesOf("timeZone") : []
+);
+
+function isSupportedTimezone(value: string): boolean {
+  if (!value) return false;
+
+  if (SUPPORTED_TIMEZONES.size > 0) {
+    return SUPPORTED_TIMEZONES.has(value);
+  }
+
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function normalizePropertyTimezone(value: unknown): string {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) return "";
+  return isSupportedTimezone(normalized) ? normalized : "";
+}
+
+function normalizeTimePolicyValue(value: unknown): string {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) return "";
+  return TIME_VALUE_PATTERN.test(normalized) ? normalized : "";
+}
+
+function isStayBasedServiceKey(serviceKey: unknown): boolean {
+  return STAY_BASED_SERVICE_KEYS.has(normServiceKey(serviceKey));
+}
+
+function resolvePropertyStayPolicy(params: {
+  serviceKey: unknown;
+  timezone?: unknown;
+  checkInTime?: unknown;
+  checkOutTime?: unknown;
+}) {
+  const stayBased = isStayBasedServiceKey(params.serviceKey);
+  const timezone = normalizePropertyTimezone(params.timezone) || DEFAULT_PROPERTY_TIMEZONE;
+  const checkInTime =
+    normalizeTimePolicyValue(params.checkInTime) ||
+    (stayBased ? DEFAULT_STAY_CHECK_IN_TIME : "");
+  const checkOutTime =
+    normalizeTimePolicyValue(params.checkOutTime) ||
+    (stayBased ? DEFAULT_STAY_CHECK_OUT_TIME : "");
+
+  return {
+    stayBased,
+    timezone,
+    checkInTime: checkInTime || null,
+    checkOutTime: checkOutTime || null,
+  };
 }
 
 function normalizeAsciiHeaderValue(value: unknown): string {
@@ -1406,6 +1469,12 @@ function parseLocationInput(body: Record<string, unknown>): {
 }
 
 function serializeProperty(item: PropertyWithRelations) {
+  const stayPolicy = resolvePropertyStayPolicy({
+    serviceKey: item.service?.key,
+    timezone: (item as Record<string, unknown>)?.timezone,
+    checkInTime: (item as Record<string, unknown>)?.checkInTime,
+    checkOutTime: (item as Record<string, unknown>)?.checkOutTime,
+  });
   const images = item.images
     .slice()
     .sort((a, b) => a.sortOrder - b.sortOrder || a.createdAt.getTime() - b.createdAt.getTime())
@@ -1427,6 +1496,7 @@ function serializeProperty(item: PropertyWithRelations) {
     locationLng: item.locationLng ?? null,
     locationPlaceId: item.locationPlaceId ?? null,
     locationSource: item.locationSource ?? "MANUAL",
+    timezone: stayPolicy.timezone,
     locationMeta: {
       label: item.location,
       lat: item.locationLat ?? null,
@@ -1435,9 +1505,17 @@ function serializeProperty(item: PropertyWithRelations) {
       source: item.locationSource ?? "MANUAL",
     },
     rulesText: item.rulesText,
+    checkInTime: stayPolicy.checkInTime,
+    checkOutTime: stayPolicy.checkOutTime,
     isVisible: item.isVisible,
     serviceId: item.serviceId,
     serviceKey: item.service?.key ?? null,
+    stayPolicy: {
+      enabled: stayPolicy.stayBased,
+      timezone: stayPolicy.timezone,
+      checkInTime: stayPolicy.checkInTime,
+      checkOutTime: stayPolicy.checkOutTime,
+    },
     priceHour: getPricingUnitPrice(item.pricings, "HOURLY"),
     priceDay: getPricingUnitPrice(item.pricings, "DAILY"),
     priceWeek: getPricingUnitPrice(item.pricings, "WEEKLY"),
@@ -1461,6 +1539,10 @@ function validatePropertyInput(params: {
   city: string;
   areaName: string;
   location: string;
+  timezone: string;
+  checkInTime: string | null;
+  checkOutTime: string | null;
+  stayPolicyRequired: boolean;
   rulesText: string;
   roomCountNumber: number;
   priceHour: number | null;
@@ -1473,6 +1555,7 @@ function validatePropertyInput(params: {
   if (!params.city) return "city is required";
   if (!params.areaName) return "areaName is required";
   if (!params.location) return "location is required";
+  if (!params.timezone) return "timezone is required";
   if (!params.rulesText) return "rulesText is required";
 
   if (params.title.length > MAX_TITLE_LENGTH) {
@@ -1489,6 +1572,26 @@ function validatePropertyInput(params: {
 
   if (params.location.length > MAX_LOCATION_LENGTH) {
     return `location maksimum ${MAX_LOCATION_LENGTH} simvol ola bilər`;
+  }
+
+  if (!isSupportedTimezone(params.timezone)) {
+    return "timezone is invalid";
+  }
+
+  if (params.stayPolicyRequired && !params.checkInTime) {
+    return "checkInTime is required for stay-based properties";
+  }
+
+  if (params.stayPolicyRequired && !params.checkOutTime) {
+    return "checkOutTime is required for stay-based properties";
+  }
+
+  if (params.checkInTime && !TIME_VALUE_PATTERN.test(params.checkInTime)) {
+    return "checkInTime format is invalid";
+  }
+
+  if (params.checkOutTime && !TIME_VALUE_PATTERN.test(params.checkOutTime)) {
+    return "checkOutTime format is invalid";
   }
 
   if (params.rulesText.length > MAX_RULES_TEXT_LENGTH) {
@@ -1841,12 +1944,22 @@ ownerPropertiesRouter.post(
       const priceWeek = toPositiveIntOrNull(body.priceWeek);
       const priceMonth = toPositiveIntOrNull(body.priceMonth);
       const priceYear = toPositiveIntOrNull(body.priceYear);
+      const stayPolicy = resolvePropertyStayPolicy({
+        serviceKey,
+        timezone: body.timezone,
+        checkInTime: body.checkInTime,
+        checkOutTime: body.checkOutTime,
+      });
 
       const validationError = validatePropertyInput({
         title,
         city,
         areaName,
         location: locationInput.location,
+        timezone: stayPolicy.timezone,
+        checkInTime: stayPolicy.checkInTime,
+        checkOutTime: stayPolicy.checkOutTime,
+        stayPolicyRequired: stayPolicy.stayBased,
         rulesText,
         roomCountNumber,
         priceHour,
@@ -1895,7 +2008,10 @@ ownerPropertiesRouter.post(
               locationLng: locationInput.locationLng,
               locationPlaceId: locationInput.locationPlaceId,
               locationSource: locationInput.locationSource,
+              timezone: stayPolicy.timezone,
               rulesText,
+              checkInTime: stayPolicy.checkInTime,
+              checkOutTime: stayPolicy.checkOutTime,
               isVisible: true,
             },
             select: { id: true },
@@ -2005,6 +2121,7 @@ ownerPropertiesRouter.patch(
 
       const existing = resolved.property;
       const body = asRecord(req.body ?? {});
+      const serviceKey = existing.service?.key ?? "";
 
       const parsedDirectLocation = parseLocationInput({
         ...body,
@@ -2072,6 +2189,22 @@ ownerPropertiesRouter.patch(
         return bad(res, imageInput.error);
       }
 
+      const stayPolicy = resolvePropertyStayPolicy({
+        serviceKey,
+        timezone:
+          body.timezone !== undefined
+            ? body.timezone
+            : (existing as Record<string, unknown>)?.timezone,
+        checkInTime:
+          body.checkInTime !== undefined
+            ? body.checkInTime
+            : (existing as Record<string, unknown>)?.checkInTime,
+        checkOutTime:
+          body.checkOutTime !== undefined
+            ? body.checkOutTime
+            : (existing as Record<string, unknown>)?.checkOutTime,
+      });
+
       const finalImages = imageInput.provided
         ? imageInput.images
         : existing.images
@@ -2097,6 +2230,10 @@ ownerPropertiesRouter.patch(
         city,
         areaName,
         location: parsedDirectLocation.location,
+        timezone: stayPolicy.timezone,
+        checkInTime: stayPolicy.checkInTime,
+        checkOutTime: stayPolicy.checkOutTime,
+        stayPolicyRequired: stayPolicy.stayBased,
         rulesText,
         roomCountNumber,
         priceHour,
@@ -2124,7 +2261,10 @@ ownerPropertiesRouter.patch(
               locationLng: parsedDirectLocation.locationLng,
               locationPlaceId: parsedDirectLocation.locationPlaceId,
               locationSource: parsedDirectLocation.locationSource,
+              timezone: stayPolicy.timezone,
               rulesText,
+              checkInTime: stayPolicy.checkInTime,
+              checkOutTime: stayPolicy.checkOutTime,
             },
           });
 
