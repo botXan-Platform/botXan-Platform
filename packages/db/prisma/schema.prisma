@@ -360,6 +360,7 @@ model Property {
   locationLng     Float?
   locationPlaceId String?
   locationSource  LocationSource @default(MANUAL)
+  timezone        String?
 
   rulesText    String
   checkInTime  String?
