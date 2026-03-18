@@ -1,7 +1,7 @@
 # dependencies
 node_modules/
 
-# build
+# builds
 .next/
 dist/
 build/
@@ -18,15 +18,21 @@ coverage/
 # logs
 *.log
 
-# macOS
+# os/editor junk
 .DS_Store
+
+# generated/runtime
+apps/bot-api/uploads/
+apps/bot-api/.wa-mock/
 
 # archives
 *.zip
 
-# runtime/generated
-apps/bot-api/uploads/
-apps/bot-api/.wa-mock/
-
-# optional backups
+# backups
 *.bak
+
+REPO_MANIFEST.txt
+REPO_TREE.txt
+
+REPO_MANIFEST.txt
+REPO_TREE.txt
