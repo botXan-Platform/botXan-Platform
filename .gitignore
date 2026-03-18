@@ -30,3 +30,8 @@ apps/bot-api/.wa-mock/
 
 # optional backups
 *.bak
+
+REPO_TREE.txt
+REPO_MANIFEST.txt
+DAY_HANDOFF.md
+_local_exports/
